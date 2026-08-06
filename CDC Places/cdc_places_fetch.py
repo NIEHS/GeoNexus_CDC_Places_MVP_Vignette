@@ -35,13 +35,20 @@ python cdc_places_fetch.py --dataset-id yjkw-uj5s --near 35.78,-78.64 --radius 1
 """
 
 import argparse
+import csv
+import json
 import os
 import sys
 import textwrap
 import time
+import urllib.parse
+import urllib.request
 from typing import Optional
 
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
 
 try:
     import pandas as pd
@@ -59,6 +66,64 @@ DISCOVERY_URL = "https://api.us.socrata.com/api/catalog/v1"
 DOMAIN        = "data.cdc.gov"
 DEFAULT_QUERY = "PLACES"
 PAGE_SIZE     = 50000
+ESTIMATE_TYPE_IDS = {
+    "crude_prevalence": "CrudePrev",
+    "age_adjusted_prevalence": "AgeAdjPrev",
+}
+
+
+class _SimpleResponse:
+    def __init__(self, status_code: int, text: str):
+        self.status_code = status_code
+        self.text = text
+
+    def json(self):
+        return json.loads(self.text)
+
+
+class _SimpleDataFrame:
+    """Minimal DataFrame-like object used when pandas is unavailable."""
+
+    def __init__(self, rows: list):
+        self._rows = rows
+        self.columns = list(rows[0].keys()) if rows else []
+
+    def __len__(self):
+        return len(self._rows)
+
+    def head(self, n: int = 5):
+        return _SimpleDataFrame(self._rows[:n])
+
+    def to_csv(self, out_path: str, index: bool = False):
+        fieldnames = self.columns
+        with open(out_path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self._rows)
+
+    def to_dict_records(self) -> list:
+        return list(self._rows)
+
+
+def _http_get(url: str,
+              params: Optional[dict] = None,
+              headers: Optional[dict] = None,
+              timeout: int = 30):
+    """HTTP GET with a urllib fallback when requests is unavailable."""
+    if requests is not None and hasattr(requests, "get"):
+        return requests.get(url, params=params, headers=headers, timeout=timeout)
+
+    if params:
+        query = urllib.parse.urlencode(params)
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{query}"
+
+    request = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return _SimpleResponse(response.status, response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return _SimpleResponse(exc.code, exc.read().decode("utf-8", errors="replace"))
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +150,7 @@ def discover_datasets(domain: str = DOMAIN,
     if not category and not query:
         params["q"] = DEFAULT_QUERY
 
-    resp = requests.get(DISCOVERY_URL, params=params, timeout=30)
+    resp = _http_get(DISCOVERY_URL, params=params, timeout=30)
     if resp.status_code != 200:
         raise RuntimeError(
             f"Discovery API request failed ({resp.status_code}): {resp.text[:500]}"
@@ -157,7 +222,7 @@ def fetch_metadata(dataset_id: str, app_token: Optional[str] = None) -> dict:
     if app_token:
         headers["X-App-Token"] = app_token
 
-    resp = requests.get(url, headers=headers, timeout=30)
+    resp = _http_get(url, headers=headers, timeout=30)
     if resp.status_code != 200:
         raise RuntimeError(
             f"Metadata request failed ({resp.status_code}): {resp.text[:500]}"
@@ -205,9 +270,6 @@ def print_metadata(meta: dict) -> None:
 
 def save_metadata_csv(meta: dict, out_path: str) -> None:
     """Save column metadata to a CSV for easy reference."""
-    if pd is None:
-        raise RuntimeError("pandas is required: pip install pandas")
-
     user_cols = [c for c in meta.get("columns", [])
                  if not c.get("fieldName", "").startswith(":")]
     rows = [
@@ -220,7 +282,14 @@ def save_metadata_csv(meta: dict, out_path: str) -> None:
         }
         for col in user_cols
     ]
-    pd.DataFrame(rows).to_csv(out_path, index=False)
+    if pd is not None:
+        pd.DataFrame(rows).to_csv(out_path, index=False)
+    else:
+        fieldnames = ["field_name", "display_name", "data_type", "description", "position"]
+        with open(out_path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
     print(f"Column metadata saved to {out_path}")
 
 
@@ -269,6 +338,68 @@ def build_where_clause(state: Optional[str] = None,
     return " AND ".join(clauses) if clauses else None
 
 
+def export_top_counties_by_measure(rows: list,
+                                   state: str,
+                                   measures: list,
+                                   estimate_type: str,
+                                   ranking_measure: str,
+                                   top_n: int,
+                                   out_path: str) -> list:
+    """
+    Filter county-level PLACES rows and export a wide CSV for the top N counties
+    ranked by one measure.
+    """
+    estimate_id = ESTIMATE_TYPE_IDS.get(estimate_type, estimate_type)
+    normalized_measures = [measure.upper() for measure in measures]
+    ranking_measure = ranking_measure.upper()
+
+    counties = {}
+    for row in rows:
+        if (row.get("stateabbr") or "").upper() != state.upper():
+            continue
+        if (row.get("datavaluetypeid") or "") != estimate_id:
+            continue
+
+        measure_id = (row.get("measureid") or "").upper()
+        if measure_id not in normalized_measures:
+            continue
+
+        county_id = row.get("locationid") or row.get("countyfips") or row.get("countyname")
+        if not county_id:
+            continue
+
+        county = counties.setdefault(
+            county_id,
+            {
+                "locationid": county_id,
+                "countyname": row.get("countyname", ""),
+                "stateabbr": (row.get("stateabbr") or "").upper(),
+            },
+        )
+        county[measure_id.lower()] = row.get("data_value")
+
+    complete_counties = [
+        county for county in counties.values()
+        if all(measure.lower() in county for measure in normalized_measures)
+    ]
+
+    ranked_counties = sorted(
+        complete_counties,
+        key=lambda county: float(county[ranking_measure.lower()]),
+        reverse=True,
+    )[:top_n]
+
+    fieldnames = ["locationid", "countyname", "stateabbr"] + [
+        measure.lower() for measure in normalized_measures
+    ]
+    with open(out_path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(ranked_counties)
+
+    return ranked_counties
+
+
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
@@ -283,9 +414,6 @@ def fetch_places_data(dataset_id: str,
     Page through a Socrata dataset and return the results as a DataFrame.
     limit=None fetches every matching row; an integer caps the total.
     """
-    if pd is None:
-        raise RuntimeError("pandas is required: pip install pandas requests")
-
     url     = BASE_URL.format(dataset_id=dataset_id)
     headers = {}
     if app_token:
@@ -302,7 +430,7 @@ def fetch_places_data(dataset_id: str,
         if select:
             params["$select"] = select
 
-        resp = requests.get(url, params=params, headers=headers, timeout=60)
+        resp = _http_get(url, params=params, headers=headers, timeout=60)
         if resp.status_code != 200:
             raise RuntimeError(
                 f"Request failed ({resp.status_code}): {resp.text[:500]}"
@@ -326,7 +454,9 @@ def fetch_places_data(dataset_id: str,
 
         time.sleep(0.1)
 
-    return pd.DataFrame(all_rows)
+    if pd is not None:
+        return pd.DataFrame(all_rows)
+    return _SimpleDataFrame(all_rows)
 
 
 # ---------------------------------------------------------------------------
