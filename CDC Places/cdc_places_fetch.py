@@ -400,6 +400,23 @@ def export_top_counties_by_measure(rows: list,
     return ranked_counties
 
 
+def add_centroid_columns(rows: list) -> list:
+    """Add `lon` and `lat` columns from a Socrata geolocation Point field."""
+    enriched_rows = []
+    for row in rows:
+        enriched = dict(row)
+        geolocation = enriched.get("geolocation") or {}
+        coordinates = geolocation.get("coordinates") if isinstance(geolocation, dict) else None
+        if isinstance(coordinates, (list, tuple)) and len(coordinates) >= 2:
+            enriched["lon"] = coordinates[0]
+            enriched["lat"] = coordinates[1]
+        else:
+            enriched["lon"] = None
+            enriched["lat"] = None
+        enriched_rows.append(enriched)
+    return enriched_rows
+
+
 # ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------

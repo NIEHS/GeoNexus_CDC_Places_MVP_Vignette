@@ -149,13 +149,14 @@ class TestLiveCdcPlacesIntegration(unittest.TestCase):
         self.assertIn("diabetes_crudeprev", column_names)
         self.assertIn("obesity_crudeprev", column_names)
         self.assertIn("csmoking_crudeprev", column_names)
+        self.assertIn("geolocation", column_names)
 
         where = cdc_places_fetch.build_where_clause(state="AZ")
         try:
             df = cdc_places_fetch.fetch_places_data(
                 dataset_id=dataset_id,
                 where=where,
-                select="countyfips,countyname,stateabbr,diabetes_crudeprev,obesity_crudeprev,csmoking_crudeprev",
+                select="countyfips,countyname,stateabbr,geolocation,diabetes_crudeprev,obesity_crudeprev,csmoking_crudeprev",
                 limit=5,
                 verbose=False,
             )
@@ -165,21 +166,69 @@ class TestLiveCdcPlacesIntegration(unittest.TestCase):
         self.assertGreater(len(df), 0)
         self.assertIn("countyfips", df.columns)
         self.assertIn("diabetes_crudeprev", df.columns)
+        self.assertIn("geolocation", df.columns)
+
+        rows = df.to_dict_records() if hasattr(df, "to_dict_records") else df.to_dict(orient="records")
+        centroid_rows = [
+            {
+                "countyfips": row["countyfips"],
+                "countyname": row["countyname"],
+                "stateabbr": row["stateabbr"],
+                "lon": row["lon"],
+                "lat": row["lat"],
+                "diabetes_crudeprev": row["diabetes_crudeprev"],
+                "obesity_crudeprev": row["obesity_crudeprev"],
+                "csmoking_crudeprev": row["csmoking_crudeprev"],
+            }
+            for row in cdc_places_fetch.add_centroid_columns(rows)
+        ]
+        self.assertTrue(all("lon" in row and "lat" in row for row in centroid_rows))
 
         output_dir = os.environ.get("OUTPUT_DIR")
         if output_dir:
             output_path = Path(output_dir) / "az_county_diabetes_live.csv"
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            df.to_csv(output_path, index=False)
+            with output_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "countyfips",
+                        "countyname",
+                        "stateabbr",
+                        "lon",
+                        "lat",
+                        "diabetes_crudeprev",
+                        "obesity_crudeprev",
+                        "csmoking_crudeprev",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows(centroid_rows)
             with output_path.open(newline="", encoding="utf-8") as handle:
                 csv_rows = list(csv.DictReader(handle))
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_path = Path(tmpdir) / "az_county_diabetes_live.csv"
-                df.to_csv(output_path, index=False)
+                with output_path.open("w", newline="", encoding="utf-8") as handle:
+                    writer = csv.DictWriter(
+                        handle,
+                        fieldnames=[
+                            "countyfips",
+                            "countyname",
+                            "stateabbr",
+                            "lon",
+                            "lat",
+                            "diabetes_crudeprev",
+                            "obesity_crudeprev",
+                            "csmoking_crudeprev",
+                        ],
+                    )
+                    writer.writeheader()
+                    writer.writerows(centroid_rows)
                 with output_path.open(newline="", encoding="utf-8") as handle:
                     csv_rows = list(csv.DictReader(handle))
 
         self.assertGreater(len(csv_rows), 0)
         self.assertTrue(all(row["stateabbr"] == "AZ" for row in csv_rows))
         self.assertTrue(all(row["diabetes_crudeprev"] for row in csv_rows))
+        self.assertTrue(all(row["lon"] and row["lat"] for row in csv_rows))
