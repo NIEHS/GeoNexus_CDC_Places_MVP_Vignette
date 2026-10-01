@@ -331,7 +331,7 @@ Amadeus container
 amadeus_output/joined/places_amadeus_joined_features.csv
 ```
 
-Run both containers sequentially:
+Run both steps from the repo root:
 
 ```bash
 # Step 1 — CDC Places → manifest
@@ -344,12 +344,11 @@ python "CDC Places/cdc_places_feature_builder.py" \
 
 # Step 2 — Amadeus reads manifest
 mkdir -p amadeus_output
-
 docker run --rm \
   --platform linux/amd64 \
   -v "$(pwd)/cdc_places_to_amadeus_output/selected:/input:ro" \
   -v "$(pwd)/amadeus_output:/output" \
-  ghcr.io/niehs/geonexus-amadeus-covariate-builder:0.1.0 \
+  ghcr.io/niehs/geonexus-amadeus-covariate-builder:0.1.8 \
   --input-locations /input/amadeus_location_manifest.csv \
   --covariate-dataset gridmet \
   --covariate-variable tmmx \
