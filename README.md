@@ -78,7 +78,7 @@ locations
 - Select geographies using a simple rule:
   - `top_n`
   - optionally `threshold_gte`
-- Use a staged centroid reference table for representative points.
+- Extract representative points (lon/lat) from the CDC PLACES geolocation column.
 - Generate `selected_geographies.csv`.
 - Generate `amadeus_location_manifest.csv`.
 - Generate metadata, provenance, QA, and logs.
@@ -104,25 +104,9 @@ locations
 
 ## Key MVP design decision
 
-The CDC PLACES app should use a pre-staged centroid lookup table rather than generating centroids dynamically.
+The CDC PLACES API (GIS Friendly Format dataset) includes a `geolocation` column with a centroid Point for every county. The app extracts lon/lat directly from this field — no separate centroid file is needed.
 
-This keeps the first DE implementation realistic and avoids making the CDC PLACES app responsible for boundary downloads, polygon handling, CRS transformations, or geometry validity issues.
-
-### Recommended reference file
-
-```text
-reference/county_centroids_az.csv
-```
-
-### Reference file schema
-
-```csv
-geo_level,geoid,state,place_name,lon,lat
-county,04013,AZ,Maricopa County,-112.491,33.348
-county,04019,AZ,Pima County,-111.789,32.097
-```
-
-A later follow-on issue can add dynamic centroid generation from GEOIDs and boundary files.
+This avoids boundary downloads, polygon handling, CRS transformations, and staging a reference file. The CDC-provided centroid is sufficient for Amadeus handoff.
 
 ---
 
@@ -141,7 +125,6 @@ The form should be designed around retrieval, selection, and Amadeus handoff.
 | `selection_method` | dropdown | yes | `top_n` | MVP options: `top_n`, optionally `threshold_gte` |
 | `top_n` | integer | conditional | `5` | Used when `selection_method = top_n` |
 | `threshold_value` | number | conditional | none | Used when `selection_method = threshold_gte` |
-| `centroid_reference` | file input | yes | `reference/county_centroids_az.csv` | Pre-staged centroid lookup |
 | `output_mode` | dropdown | yes | `both` | Produce long and wide outputs |
 | `output_prefix` | text | no | `cdc_places_to_amadeus_demo` | Used to name output files |
 
@@ -159,7 +142,6 @@ python cdc_places_feature_builder.py \
   --selection-measure DIABETES \
   --selection-method top_n \
   --top-n 5 \
-  --centroid-reference reference/county_centroids_az.csv \
   --output-mode both \
   --outdir "${OUTPUT_DIR}"
 ```
@@ -259,9 +241,9 @@ places_<measure_id>_<estimate_type>
 Example feature columns:
 
 ```text
-places_diabetes_crudeprev
-places_obesity_crudeprev
-places_csmoking_crudeprev
+places_diabetes_crude_prevalence
+places_obesity_crude_prevalence
+places_csmoking_crude_prevalence
 ```
 
 ---
@@ -371,7 +353,6 @@ Minimum fields:
   "selection_measure": "DIABETES",
   "selection_method": "top_n",
   "top_n": 5,
-  "centroid_reference": "reference/county_centroids_az.csv",
   "retrieved_at": "2026-07-15T00:00:00Z"
 }
 ```
@@ -428,8 +409,8 @@ The QA summary should include:
 - selected ranking or threshold rule
 - missing estimate count
 - duplicate `geoid + measure_id + estimate_type` count
-- centroid join success count
-- centroid join failure count
+- geolocation extraction success count
+- geolocation extraction failure count (rows missing lon/lat)
 - Amadeus manifest row count
 - output file inventory
 - overall run status
@@ -475,8 +456,7 @@ Example:
 - [ ] Implement wide-format CDC PLACES feature matrix.
 - [ ] Implement geography selection by `top_n`.
 - [ ] Implement optional geography selection by `threshold_gte`.
-- [ ] Add or stage county centroid reference table.
-- [ ] Join selected GEOIDs to centroid reference.
+- [ ] Extract lon/lat from CDC PLACES geolocation column.
 - [ ] Generate `selected_geographies.csv`.
 - [ ] Generate `amadeus_location_manifest.csv`.
 - [ ] Generate CDC PLACES feature dictionary.

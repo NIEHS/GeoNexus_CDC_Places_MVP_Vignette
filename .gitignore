@@ -217,3 +217,29 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .idea
+
+# Claude
+.claude/
+
+# ── Project output folders ────────────────────────────────────────────────────
+# CDC Places feature builder output
+cdc_places_to_amadeus_output/
+**/cdc_places_to_amadeus_output/
+
+# Amadeus covariate builder output
+amadeus_output/
+**/amadeus_output/
+
+# Docker local test output
+test_output/
+**/test_output/
+
+# Ad-hoc CSV outputs (fetch runs, scratch files)
+CDC Places/*.csv
+!CDC Places/example_*.csv
+
+# Large binary data files (gridMET NetCDF downloads)
+*.nc
+
+# Jupyter notebook output cells (keep the notebook, not the outputs)
+CDC Places/.ipynb_checkpoints/
