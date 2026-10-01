@@ -172,7 +172,7 @@ Write output bundle:
   metadata/metadata.json
   metadata/provenance.json
   qa/qa_summary.md
-  logs/run.log
+  logs/cdc_places_run.log
 ```
 
 ---

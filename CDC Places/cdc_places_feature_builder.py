@@ -456,7 +456,7 @@ def _write_provenance(args, dataset_id, provenance_id, retrieved_at, path):
                 "metadata/metadata.json",
                 "metadata/provenance.json",
                 "qa/qa_summary.md",
-                "logs/run.log",
+                "logs/cdc_places_run.log",
             ],
             "retrieved_at": retrieved_at,
             "dataset_id":   dataset_id,
@@ -529,9 +529,21 @@ def main():
 
     args, _ = parser.parse_known_args()
 
+    # CyVerse DE passes multi-value args as a single quoted string
+    # (e.g. --measures "DIABETES OBESITY CSMOKING"). Flatten by splitting on
+    # commas and whitespace so both CyVerse and CLI invocations work correctly.
+    def _split_tokens(values):
+        tokens = []
+        for v in values:
+            tokens.extend(t.strip() for t in v.replace(",", " ").split() if t.strip())
+        return tokens
+
+    args.measures = _split_tokens(args.measures)
+    args.states   = _split_tokens(args.states)
+
     # ── Setup ─────────────────────────────────────────────────────────────────
     dirs = _make_dirs(args.outdir)
-    log  = _setup_logger(os.path.join(dirs["logs"], "run.log"))
+    log  = _setup_logger(os.path.join(dirs["logs"], "cdc_places_run.log"))
 
     retrieved_at     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     provenance_id    = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
@@ -612,6 +624,12 @@ def main():
     manifest_path = os.path.join(dirs["selected"], "amadeus_location_manifest.csv")
     _write_manifest(selected, args.selection_measure, manifest_path)
     log.info(f"Wrote Amadeus manifest: {manifest_path}")
+
+    # Also write manifest to the output root so CyVerse DE workflow can reference
+    # it directly as /work/amadeus_location_manifest.csv in the Amadeus step.
+    root_manifest_path = os.path.join(args.outdir, "amadeus_location_manifest.csv")
+    _write_manifest(selected, args.selection_measure, root_manifest_path)
+    log.info(f"Wrote root-level manifest: {root_manifest_path}")
 
     # ── Metadata + provenance + QA ────────────────────────────────────────────
     _write_metadata(args, dataset_id, provenance_id, retrieved_at,
