@@ -1,12 +1,13 @@
 #!/bin/sh
 set -e
 
-IMAGE=ghcr.io/niehs/geonexus-cdc-places-geography-selector:0.1.0
+IMAGE=ghcr.io/niehs/geonexus-cdc-places-geography-selector:0.1.4
+#IMAGE=pateldes/geonexus-cdc-places-geography-selector:0.1.4
 
 docker buildx build --no-cache --platform linux/amd64 -t "$IMAGE" .
 
 # Uncomment to push to registry after a successful build:
-# docker push "$IMAGE"
+docker push "$IMAGE"
 
 # ── Local test run ────────────────────────────────────────────────────────────
 mkdir -p test_output

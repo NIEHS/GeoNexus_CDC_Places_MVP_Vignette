@@ -169,7 +169,7 @@ cdc_places_to_amadeus_output/
   qa/
     qa_summary.md
   logs/
-    run.log
+    cdc_places_run.log
 ```
 
 The `selected/` folder is the critical bridge between the CDC PLACES task and the Amadeus task.
@@ -383,7 +383,7 @@ Minimum fields:
     "metadata/metadata.json",
     "metadata/provenance.json",
     "qa/qa_summary.md",
-    "logs/run.log"
+    "logs/cdc_places_run.log"
   ]
 }
 ```
